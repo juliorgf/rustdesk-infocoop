@@ -51,7 +51,7 @@
 | Versión upstream actual | `1.4.6` (`Cargo.toml`, `flutter/pubspec.yaml`) |
 | Tags locales | Ninguno |
 | Submodule `libs/hbb_common` | **Inicializado**. Apunta al fork `juliorgf/hbb_common` en SHA `a78a7f2` (branch `claude/rustdesk-fork-customization-Lxtku`). Carga el patch de SO_KEEPALIVE. |
-| Cambios propios commiteados (parent) | `7a83078` (NOTES.md), `ed35d62` (patch file preservado), `9aae148` (wiring del submodule fork). |
+| Cambios propios commiteados (parent) | `7a83078` (NOTES.md), `9aae148` (wiring del submodule fork), `0481bd1` (NOTES.md update post-fix). |
 | Upstream remote git | No configurado en el repo local. URL upstream conocida: `https://github.com/rustdesk/rustdesk`. |
 | Fork de `hbb_common` | `https://github.com/juliorgf/hbb_common` (creado por el usuario; push directo desde la sesión de Claude está bloqueado por el harness, el usuario lo pushea manualmente desde su máquina). |
 
@@ -194,7 +194,7 @@ Tras inicializar el submodule y rastrear el flujo, el punto crítico resultó se
 
 Patch aplicado en `juliorgf/hbb_common@a78a7f2`: agrega ~28 líneas justo después del `set_nodelay`, usando el mismo idiom raw-fd round-trip que ya usa `listen_any` en la misma file (líneas 234-247) para aplicar opciones de `socket2` a un `TcpSocket` de tokio. Soporta Unix y Windows. **Cero dependencias nuevas** (`socket2 0.3` ya estaba en `hbb_common/Cargo.toml`).
 
-Una copia del patch como archivo está preservada en `patches/hbb_common/0001-fix-tcp-enable-SO_KEEPALIVE.patch` (commit `ed35d62`) por si hace falta re-aplicarlo en otra rama o ambiente. El submodule pointer está bumpeado en commit `9aae148` del parent.
+El submodule pointer está bumpeado en commit `9aae148` del parent.
 
 ### 6.5 Valores de keepalive elegidos
 
@@ -349,7 +349,7 @@ Justificación: CGNAT mata a los 30s, queremos al menos un probe + ack antes de 
 - [ ] Sección "Troubleshooting" para problemas comunes.
 
 ### Limpieza pendiente (decidir con el usuario)
-- [ ] ¿Borrar `patches/hbb_common/0001-fix-tcp-enable-SO_KEEPALIVE.patch`? Ahora es redundante (el patch ya vive como commit en `juliorgf/hbb_common@a78a7f2`).
+- _(ninguna)_
 
 ---
 
