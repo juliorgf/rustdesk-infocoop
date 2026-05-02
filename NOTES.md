@@ -47,12 +47,13 @@
 | Campo | Valor |
 | --- | --- |
 | Branch de trabajo | `claude/rustdesk-fork-customization-Lxtku` |
-| Último commit base | `383a5c3` — `feat: option, enable-privacy-mode & enable-perm-change-in-accept-window (#14875)` (upstream) |
+| Último commit base upstream | `383a5c3` — `feat: option, enable-privacy-mode & enable-perm-change-in-accept-window (#14875)` |
 | Versión upstream actual | `1.4.6` (`Cargo.toml`, `flutter/pubspec.yaml`) |
 | Tags locales | Ninguno |
-| Submodule `libs/hbb_common` | **Declarado pero NO inicializado** — el directorio existe vacío. Hay que correr `git submodule update --init --recursive` antes de cualquier build. |
-| Cambios propios commiteados | **Ninguno todavía** — fase de reconocimiento. |
+| Submodule `libs/hbb_common` | **Inicializado**. Apunta al fork `juliorgf/hbb_common` en SHA `a78a7f2` (branch `claude/rustdesk-fork-customization-Lxtku`). Carga el patch de SO_KEEPALIVE. |
+| Cambios propios commiteados (parent) | `7a83078` (NOTES.md), `ed35d62` (patch file preservado), `9aae148` (wiring del submodule fork). |
 | Upstream remote git | No configurado en el repo local. URL upstream conocida: `https://github.com/rustdesk/rustdesk`. |
+| Fork de `hbb_common` | `https://github.com/juliorgf/hbb_common` (creado por el usuario; push directo desde la sesión de Claude está bloqueado por el harness, el usuario lo pushea manualmente desde su máquina). |
 
 ### Decisión pendiente sobre versionado
 - Hoy estamos parados sobre un commit de master upstream, no sobre un tag estable.
@@ -183,17 +184,30 @@ Topología real:
 | `src/server/connection.rs` | 1424 | `TcpStream::connect(&addr)` | **No (loopback)** — server conecta a Postgres real en localhost. |
 | `src/server/connection.rs` | 1426 | `port_forward_socket = Some(Framed::new(sock, BytesCodec::new()))` | wrapper sobre loopback. |
 
-### 6.4 Conclusión preliminar y trabajo pendiente para Fase 2
+### 6.4 Resolución (fix aplicado)
 
-- **El socket crítico no es el de `port_forward.rs:67` ni `connection.rs:1424`** — esos son loopback.
-- El socket que necesita keepalive es el `Stream` (`hbb_common::Stream`) que envuelve la conexión cliente↔relay. Está creado en algún punto de `src/client.rs` (probablemente vía `Client::start()` o helpers en `rendezvous_mediator.rs` / `hbb_common::tcp::*`).
-- **Tarea Fase 2.0 (pre-fix)**: rastrear dónde se crea el `TcpStream` subyacente al `hbb_common::Stream` en el flujo cliente→relay y server→relay, y verificar si `hbb_common` ya expone un setter de keepalive o hay que extenderlo.
-- **Riesgo**: si el setter vive en `hbb_common`, el fix puede requerir tocar el submodule. Decidir entonces si:
-  - (a) forkeamos `hbb_common` también,
-  - (b) aplicamos el keepalive en nuestro lado (después de obtener el `TcpStream` pero antes de envolverlo en `Stream`),
-  - (c) usamos `socket2::TcpKeepalive` desde nuestro código antes de pasar el socket a `hbb_common`.
+Tras inicializar el submodule y rastrear el flujo, el punto crítico resultó ser **`libs/hbb_common/src/tcp.rs:96-110`** (función `FramedStream::new`):
 
-### 6.5 Valores de keepalive propuestos (a validar contra CGNAT real)
+- Es el **único punto** donde se crea un `TcpStream` para conexiones outbound de RustDesk: cliente→relay, server→relay, cliente→rendezvous (hbbs), y todos los proxy paths terminan también acá.
+- Ya tenía `set_nodelay(true)` aplicado al `stream` recién conectado (línea 99) — el `set_keepalive` va al lado, simétrico.
+- No hay ningún uso de keepalive en TODO el repo (verificado por grep). RustDesk simplemente nunca seteó keepalive.
+
+Patch aplicado en `juliorgf/hbb_common@a78a7f2`: agrega ~28 líneas justo después del `set_nodelay`, usando el mismo idiom raw-fd round-trip que ya usa `listen_any` en la misma file (líneas 234-247) para aplicar opciones de `socket2` a un `TcpSocket` de tokio. Soporta Unix y Windows. **Cero dependencias nuevas** (`socket2 0.3` ya estaba en `hbb_common/Cargo.toml`).
+
+Una copia del patch como archivo está preservada en `patches/hbb_common/0001-fix-tcp-enable-SO_KEEPALIVE.patch` (commit `ed35d62`) por si hace falta re-aplicarlo en otra rama o ambiente. El submodule pointer está bumpeado en commit `9aae148` del parent.
+
+### 6.5 Valores de keepalive elegidos
+
+- `keepalive_time` (idle antes del primer probe): **15s** (vía `socket2::Socket::set_keepalive(Some(Duration::from_secs(15)))`).
+- `keepalive_interval` y `keepalive_retries`: **defaults del OS**.
+  - En Windows (la plataforma del cliente): interval ~1s, retries ~10 → probes activos por ~25s después de los primeros 15s idle. Esto mantiene la conexión "viva" desde la perspectiva del NAT, evitando el timeout de 30s del CGNAT.
+  - En Linux (server / relay): interval 75s, retries 9 — en el server local del operador da igual, no cruza CGNAT.
+
+Si el test real demuestra que los defaults son insuficientes en alguna plataforma, escalamos a `socket2 0.5` que expone `TcpKeepalive::with_interval(...).with_retries(...)`. Esto requiere bump de dependencia y consulta previa.
+
+### 6.6 Valores propuestos originales (referencia histórica)
+
+(Antes de implementar habíamos planeado controlar interval/retries con `socket2 0.5`. Se descartó por simplicidad — los defaults de Windows son suficientes para CGNAT 30s. Conservamos el plan por si el test real lo desmiente):
 
 - `keepalive_time` (idle antes del primer probe): **15s**
 - `keepalive_interval` (entre probes): **5s**
@@ -274,6 +288,14 @@ Justificación: CGNAT mata a los 30s, queremos al menos un probe + ack antes de 
 | 2 | Empezar por rebranding (Fase 1) antes que el fix de keepalive (Fase 2). | El rebranding tiene cero riesgo de romper funcionalidad y deja un build usable rápido. | 2026-05-01 |
 | 3 | Documentar todo en `NOTES.md` como memoria entre sesiones. | Claude no tiene memoria persistente. | 2026-05-01 |
 | 4 | Issue de keepalive: el socket crítico es el de la sesión RustDesk hacia el relay, NO los TcpStream de loopback identificados por la búsqueda inicial. | Análisis topológico: loopback no cruza CGNAT. Pendiente de confirmar exact path en el código en Fase 2. | 2026-05-01 |
+| 5 | Reordenar: hacer Fase 2 (keepalive) ANTES que Fase 1 (rebranding). | El bug bloquea trabajo diario del usuario; el rebranding es estético. | 2026-05-02 |
+| 6 | Fix de keepalive: aplicar en `libs/hbb_common/src/tcp.rs:99` (después de `set_nodelay`) en `FramedStream::new`. | Único punto donde se crea TcpStream para todas las conexiones outbound; `set_nodelay` ya está ahí, simétrico. | 2026-05-02 |
+| 7 | Mantener `socket2 = "0.3"` (no upgradear). | El método `set_keepalive(Some(d))` en 0.3 alcanza para Windows (defaults del OS son agresivos suficiente para CGNAT 30s). Evitamos bump de dep. | 2026-05-02 |
+| 8 | Forkear `hbb_common` a `juliorgf/hbb_common` y apuntar el submodule allí. | Es la única forma de tener nuestro patch persistido. Vendoring fue descartado por diff gigante. | 2026-05-02 |
+| 9 | Push de `juliorgf/hbb_common` lo hace el usuario manualmente desde su máquina. | El harness de Claude tiene autorización solo para `juliorgf/rustdesk-infocoop`; intento de push a otro repo da `repository not authorized` 502. | 2026-05-02 |
+| 10 | Strategy de servers preconfigurados: filename encoding (`src/custom_server.rs`). | Mecanismo upstream oficial, cero modificación de código Rust, máxima compatibilidad con futuros merges. | 2026-05-02 |
+| 11 | Repo `juliorgf/rustdesk-infocoop` es **privado**. | Permite commitear datos del servidor en workflows sin necesidad de GitHub Secrets. | 2026-05-02 |
+| 12 | Mantener `rustdesk.exe` como nombre del binario en lugar de `soporte-infocoop.exe`. | Minimizar diff vs upstream; la metadata visible al usuario igual va a decir "Soporte INFOCOOP" via `ProductName`/`FileDescription`. | 2026-05-02 |
 
 ---
 
@@ -294,34 +316,40 @@ Justificación: CGNAT mata a los 30s, queremos al menos un probe + ack antes de 
 
 ## 11. Próximos pasos
 
-### Inmediatos (Fase 0 — reconocimiento, casi terminada)
+### Fase 0 — Reconocimiento (terminada)
 - [x] Mapear estructura del repo.
 - [x] Identificar puntos de rebranding.
-- [x] Identificar archivos relevantes para keepalive (con caveat de §6.4).
+- [x] Identificar archivos relevantes para keepalive.
 - [x] Identificar workflows de CI.
 - [x] Crear `NOTES.md`.
-- [ ] **Validación del usuario sobre este `NOTES.md` antes de pasar a Fase 1.**
 
-### Fase 1 — Rebranding (próxima, una vez validemos hallazgos)
-- [ ] Decidir estrategia de servers preconfigurados: filename encoding vs hbb_common fork vs build env vars.
-- [ ] Definir assets: logo INFOCOOP en formato `.ico`/`.png`/`.svg`.
-- [ ] Cambiar metadata winres/bundle en `Cargo.toml`.
-- [ ] Cambiar `Runner.rc` (Flutter Windows).
-- [ ] Reemplazar iconos en `res/`.
-- [ ] Pasar `--app-name "Soporte INFOCOOP"` y `--manufacturer "INFOCOOP"` al MSI.
-- [ ] (Opcional) Workflow CI dedicado `infocoop-build.yml`.
+### Fase 2 — Fix keepalive (código terminado, falta build + test)
+- [x] Inicializar submodule `hbb_common`.
+- [x] Mapear creación de `TcpStream` cliente↔relay (resultado: `libs/hbb_common/src/tcp.rs:99`).
+- [x] Leer issues upstream #11355, #487, #12431 (WebFetch). Confirmado bug, ningún patch upstream útil.
+- [x] Implementar `set_keepalive(Some(15s))` en el socket correcto. (commit `a78a7f2` en `juliorgf/hbb_common`).
+- [x] Forkear `hbb_common` y wirear el submodule (commit `9aae148` en parent).
+- [ ] **Build local Windows** del cliente con el fix aplicado. Necesita toolchain Windows + `python3 build.py --portable --hwcodec --flutter --vram --skip-portable-pack`.
+- [ ] **Test real contra CGNAT**: instalar el build, abrir TCP tunnel a Postgres, dejar idle >1 minuto, ejecutar query. Esperado: la conexión sobrevive.
+- [ ] (Opcional) Si los defaults de Windows no alcanzan, escalar a `socket2 0.5` con `TcpKeepalive::with_interval(5s).with_retries(3)`.
 
-### Fase 2 — Fix keepalive
-- [ ] Inicializar submodule `hbb_common` y mapear `Stream` / `tcp::*` / creación de `TcpStream` cliente↔relay.
-- [ ] Leer issues upstream #11355, #487, #12431 (WebFetch).
-- [ ] Implementar `set_tcp_keepalive` con valores agresivos en el socket correcto.
-- [ ] Smoke test local.
-- [ ] Test real contra CGNAT (>1 minuto idle, query a Postgres).
+### Fase 1 — Rebranding (después del fix validado)
+- [ ] Logos: usuario subirá `infocoop.ico` (pendiente).
+- [ ] Cambiar metadata winres/bundle en `Cargo.toml` (`ProductName`, `FileDescription`, `CompanyName`, `bundle.identifier`).
+- [ ] Cambiar `flutter/windows/runner/Runner.rc` (`CompanyName`, `ProductName`, `FileDescription`).
+- [ ] Reemplazar iconos en `res/icon.ico`, `res/tray-icon.ico`, `flutter/windows/runner/resources/app_icon.ico`, etc.
+- [ ] Pasar `--app-name "Soporte INFOCOOP"` y `--manufacturer "INFOCOOP"` al MSI build (modificar workflow o defaults en `res/msi/preprocess.py`).
+- [ ] Servidores preconfigurados: filename encoding via workflow CI (renombrar `rustdesk.exe` → `rustdesk-host=remote.infocoop.com.py,key=Ly4N...,relay=remote.infocoop.com.py.exe` post-build).
+- [ ] (Opcional) Workflow CI dedicado `infocoop-build.yml` para no contaminar `flutter-build.yml`.
 
 ### Fase 3 — Documentación final
 - [ ] Sección "How to rebuild" con comandos exactos (local + CI).
 - [ ] Sección "How to rebase against new upstream tag".
+- [ ] Sección "How to update hbb_common fork against upstream".
 - [ ] Sección "Troubleshooting" para problemas comunes.
+
+### Limpieza pendiente (decidir con el usuario)
+- [ ] ¿Borrar `patches/hbb_common/0001-fix-tcp-enable-SO_KEEPALIVE.patch`? Ahora es redundante (el patch ya vive como commit en `juliorgf/hbb_common@a78a7f2`).
 
 ---
 
