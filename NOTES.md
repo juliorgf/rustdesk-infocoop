@@ -296,6 +296,7 @@ Justificación: CGNAT mata a los 30s, queremos al menos un probe + ack antes de 
 | 10 | Strategy de servers preconfigurados: filename encoding (`src/custom_server.rs`). | Mecanismo upstream oficial, cero modificación de código Rust, máxima compatibilidad con futuros merges. | 2026-05-02 |
 | 11 | Repo `juliorgf/rustdesk-infocoop` es **privado**. | Permite commitear datos del servidor en workflows sin necesidad de GitHub Secrets. | 2026-05-02 |
 | 12 | Mantener `rustdesk.exe` como nombre del binario en lugar de `soporte-infocoop.exe`. | Minimizar diff vs upstream; la metadata visible al usuario igual va a decir "Soporte INFOCOOP" via `ProductName`/`FileDescription`. | 2026-05-02 |
+| 13 | El workflow `infocoop-test-build.yml` se commitea en `master` (además de la feature branch). | GitHub solo muestra workflows con `workflow_dispatch` en el UI si están en la branch default. Push autorizado por el usuario para esta excepción puntual. | 2026-05-02 |
 
 ---
 
@@ -359,10 +360,12 @@ Justificación: CGNAT mata a los 30s, queremos al menos un probe + ack antes de 
 
 Workflow: `.github/workflows/infocoop-test-build.yml`. Trigger manual (`workflow_dispatch`).
 
+**El archivo del workflow vive en `master`** (commit `c58ac03`), porque GitHub solo muestra workflows con `workflow_dispatch` en el UI si están en la branch default. Una copia idéntica también está en `claude/rustdesk-fork-customization-Lxtku` (commit `d06b673`). Mantener ambas en sync si se actualiza el workflow.
+
 1. Entrar a https://github.com/juliorgf/rustdesk-infocoop/actions
 2. Sidebar izquierdo: seleccionar **"INFOCOOP Test Build (Windows x64)"**.
 3. Botón **"Run workflow"** (arriba a la derecha).
-4. Branch: `claude/rustdesk-fork-customization-Lxtku` (o la que tenga el fix).
+4. Branch: **seleccionar `claude/rustdesk-fork-customization-Lxtku`** (no master — el código con el fix está en la feature branch). El workflow definition se lee de master, pero el código a buildear sale de la branch elegida.
 5. Confirmar **"Run workflow"**.
 
 Tiempo esperado: 30-60 min la primera vez (vcpkg compila C++ deps), 15-30 min subsecuentes (con cache).
