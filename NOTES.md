@@ -329,7 +329,9 @@ Justificación: CGNAT mata a los 30s, queremos al menos un probe + ack antes de 
 - [x] Leer issues upstream #11355, #487, #12431 (WebFetch). Confirmado bug, ningún patch upstream útil.
 - [x] Implementar `set_keepalive(Some(15s))` en el socket correcto. (commit `a78a7f2` en `juliorgf/hbb_common`).
 - [x] Forkear `hbb_common` y wirear el submodule (commit `9aae148` en parent).
-- [ ] **Build local Windows** del cliente con el fix aplicado. Necesita toolchain Windows + `python3 build.py --portable --hwcodec --flutter --vram --skip-portable-pack`.
+- [ ] **Build Windows con el fix aplicado**. Dos opciones:
+  - **Recomendado**: GitHub Actions → workflow `INFOCOOP Test Build (Windows x64)` → Run workflow (ver §12). Genera un `.exe` unsigned descargable. ~30-60 min primera vez.
+  - Local: requiere toolchain completa (Rust 1.75 + Flutter 3.24.5 + LLVM 15 + vcpkg) + `python3 build.py --portable --hwcodec --flutter --vram --skip-portable-pack`.
 - [ ] **Test real contra CGNAT**: instalar el build, abrir TCP tunnel a Postgres, dejar idle >1 minuto, ejecutar query. Esperado: la conexión sobrevive.
 - [ ] (Opcional) Si los defaults de Windows no alcanzan, escalar a `socket2 0.5` con `TcpKeepalive::with_interval(5s).with_retries(3)`.
 
@@ -353,7 +355,30 @@ Justificación: CGNAT mata a los 30s, queremos al menos un probe + ack antes de 
 
 ---
 
-## 12. Comandos útiles (referencia)
+## 12. Cómo disparar el build de testing en GitHub Actions
+
+Workflow: `.github/workflows/infocoop-test-build.yml`. Trigger manual (`workflow_dispatch`).
+
+1. Entrar a https://github.com/juliorgf/rustdesk-infocoop/actions
+2. Sidebar izquierdo: seleccionar **"INFOCOOP Test Build (Windows x64)"**.
+3. Botón **"Run workflow"** (arriba a la derecha).
+4. Branch: `claude/rustdesk-fork-customization-Lxtku` (o la que tenga el fix).
+5. Confirmar **"Run workflow"**.
+
+Tiempo esperado: 30-60 min la primera vez (vcpkg compila C++ deps), 15-30 min subsecuentes (con cache).
+
+Output: artifact `rustdesk-windows-x64-keepalive-test` (ZIP con `rustdesk.exe` + DLLs). Disponible 14 días en la página del run.
+
+**Limitaciones del build de testing**:
+- Sin signing de Windows (SmartScreen puede dar warning al ejecutar — "Run anyway").
+- Sin `RustDeskTempTopMostWindow` (componente nativo opcional, no afecta tunneling).
+- Sin `usbmmidd_v2` ni printer driver (display virtual e impresoras — no afectan tunneling).
+- Sin MSI ni portable packer — solo `.exe` + DLLs para ejecución directa.
+- Sin servidores INFOCOOP preconfigurados — al primer arranque hay que configurar `remote.infocoop.com.py` + public key manualmente. Eso se automatiza en Fase 1.
+
+---
+
+## 13. Comandos útiles (referencia)
 
 ```bash
 # Inicializar submodule hbb_common (necesario antes de compilar)
