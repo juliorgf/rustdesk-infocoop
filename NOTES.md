@@ -51,7 +51,9 @@
 | Versión upstream actual | `1.4.6` (`Cargo.toml`, `flutter/pubspec.yaml`) |
 | Tags locales | Ninguno |
 | Submodule `libs/hbb_common` | **Inicializado**. Apunta al fork `juliorgf/hbb_common` en SHA `a78a7f2` (branch `claude/rustdesk-fork-customization-Lxtku`). Carga el patch de SO_KEEPALIVE. |
-| Cambios propios commiteados (parent) | `7a83078` (NOTES.md), `9aae148` (wiring del submodule fork), `0481bd1` (NOTES.md update post-fix). |
+| Cambios propios commiteados (parent) | `7a83078` (NOTES.md), `ed35d62` (patch file inicial, después borrado), `9aae148` (wiring submodule), `0481bd1` (NOTES.md update post-fix), `df84691` (cleanup patches/), `d06b673` (workflow CI test), `fc26685` (NOTES.md update sobre workflow). HEAD: `fc26685`. |
+| Cambios en `master` | `c58ac03` (workflow CI `infocoop-test-build.yml` para que aparezca en el UI de Actions). HEAD: `c58ac03`. |
+| Build de testing en CI | **Disparado al cierre de la sesión 2026-05-02** vía GitHub Actions, branch `claude/rustdesk-fork-customization-Lxtku`. Resultado pendiente al iniciar próxima sesión. |
 | Upstream remote git | No configurado en el repo local. URL upstream conocida: `https://github.com/rustdesk/rustdesk`. |
 | Fork de `hbb_common` | `https://github.com/juliorgf/hbb_common` (creado por el usuario; push directo desde la sesión de Claude está bloqueado por el harness, el usuario lo pushea manualmente desde su máquina). |
 
@@ -309,9 +311,26 @@ Justificación: CGNAT mata a los 30s, queremos al menos un probe + ack antes de 
    git status
    git log --oneline -10
    git branch --show-current   # debe ser claude/rustdesk-fork-customization-Lxtku
+   git -C libs/hbb_common log --oneline -3   # verificar a78a7f2
    ```
 4. Mirar la sección **§11 Próximos pasos** abajo para saber qué falta.
 5. Confirmar con el usuario antes de avanzar.
+
+### Punto de retomada concreto (sesión 2026-05-02 → próxima)
+
+La sesión anterior cerró con un build de testing **en proceso** en GitHub Actions (workflow `INFOCOOP Test Build (Windows x64)`, branch `claude/rustdesk-fork-customization-Lxtku`). Al iniciar la próxima sesión, preguntar al usuario:
+
+1. **¿Terminó el build CI?** Resultado posibles:
+   - **Éxito + descargó el `.exe`**: pasar a 2.
+   - **Build falló**: usuario pega los logs relevantes de GitHub Actions; iteramos el workflow (probable: ajuste de versión de toolchain o paso faltante).
+2. **¿Hizo el test real contra CGNAT?** (TCP tunnel a Postgres, idle >1 min, query exitosa).
+   - **Sí, funcionó**: cerrar Fase 2 oficialmente y arrancar Fase 1 (rebranding).
+   - **No funcionó**: escalamos a `socket2 0.5` con `TcpKeepalive::with_interval(5s).with_retries(3)`. Implica:
+     - Bump de dependencia en `libs/hbb_common/Cargo.toml` (consultar al usuario antes).
+     - Reescribir el patch de `tcp.rs` para usar `TcpKeepalive` en vez de `set_keepalive(Some(...))`.
+     - Nuevo commit en `juliorgf/hbb_common` (usuario pushea desde su máquina, igual que la primera vez).
+     - Bump del submodule SHA en el parent.
+3. **Si Fase 2 cierra**: arrancar Fase 1 — el primer paso es pedir el `infocoop.ico` (lo había mencionado el usuario, está pendiente de subir).
 
 ---
 
@@ -324,17 +343,17 @@ Justificación: CGNAT mata a los 30s, queremos al menos un probe + ack antes de 
 - [x] Identificar workflows de CI.
 - [x] Crear `NOTES.md`.
 
-### Fase 2 — Fix keepalive (código terminado, falta build + test)
+### Fase 2 — Fix keepalive (código terminado, build en CI, test pendiente)
 - [x] Inicializar submodule `hbb_common`.
 - [x] Mapear creación de `TcpStream` cliente↔relay (resultado: `libs/hbb_common/src/tcp.rs:99`).
 - [x] Leer issues upstream #11355, #487, #12431 (WebFetch). Confirmado bug, ningún patch upstream útil.
 - [x] Implementar `set_keepalive(Some(15s))` en el socket correcto. (commit `a78a7f2` en `juliorgf/hbb_common`).
 - [x] Forkear `hbb_common` y wirear el submodule (commit `9aae148` en parent).
-- [ ] **Build Windows con el fix aplicado**. Dos opciones:
-  - **Recomendado**: GitHub Actions → workflow `INFOCOOP Test Build (Windows x64)` → Run workflow (ver §12). Genera un `.exe` unsigned descargable. ~30-60 min primera vez.
-  - Local: requiere toolchain completa (Rust 1.75 + Flutter 3.24.5 + LLVM 15 + vcpkg) + `python3 build.py --portable --hwcodec --flutter --vram --skip-portable-pack`.
+- [x] Crear workflow CI `infocoop-test-build.yml` (en master `c58ac03` y feature branch `d06b673`).
+- [x] **Disparar el primer build de testing en CI** — hecho 2026-05-02 al cierre de sesión.
+- [ ] **Verificar resultado del build CI en próxima sesión** (artifact `rustdesk-windows-x64-keepalive-test`).
 - [ ] **Test real contra CGNAT**: instalar el build, abrir TCP tunnel a Postgres, dejar idle >1 minuto, ejecutar query. Esperado: la conexión sobrevive.
-- [ ] (Opcional) Si los defaults de Windows no alcanzan, escalar a `socket2 0.5` con `TcpKeepalive::with_interval(5s).with_retries(3)`.
+- [ ] (Plan B si test falla) Escalar a `socket2 0.5` con `TcpKeepalive::with_interval(5s).with_retries(3)` para control fino.
 
 ### Fase 1 — Rebranding (después del fix validado)
 - [ ] Logos: usuario subirá `infocoop.ico` (pendiente).
